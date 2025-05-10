@@ -1,6 +1,7 @@
 <?php
 session_start();
-require_once 'config.php';
+require_once '../config/config.php';
+require_once '../includes/log_action.php';
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
@@ -19,7 +20,7 @@ $query = "SELECT t.*,
 
 $transactions = mysqli_query($conn, $query);
 
-require_once 'header.php';
+require_once '../includes/header.php';
 ?>
 
 <div class="statement-page">
@@ -202,4 +203,4 @@ require_once 'header.php';
     });
 </script>
 
-<?php require_once 'footer.php'; ?> 
+<?php require_once '../includes/footer.php'; ?> 
