@@ -5,43 +5,94 @@ session_start();
 require_once '../config/config.php';      // Database connection
 require_once '../includes/log_action.php';  // Logging functionality
 
-// VULNERABLE CODE: XSS possible here - username not sanitized
-$username = $_SESSION['username'];
+// FIXED: XSS prevention
+$username = htmlspecialchars($_SESSION['username'], ENT_QUOTES, 'UTF-8');
 
-// Basic session check - VULNERABLE: Should check session validity
+// FIXED: Better session check with CSRF protection
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Get user's accounts from database
 $user_id = $_SESSION['user_id'];
-$query = "SELECT * FROM accounts WHERE user_id = $user_id";
-$accounts = mysqli_query($conn, $query);
+// FIXED: Use prepared statements
+$query = "SELECT * FROM accounts WHERE user_id = ?";
+$stmt = mysqli_prepare($conn, $query);
+mysqli_stmt_bind_param($stmt, "i", $user_id);
+mysqli_stmt_execute($stmt);
+$accounts = mysqli_stmt_get_result($stmt);
 
 // Handle money transfer form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['transfer'])) {
+    // Verify CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        // CSRF attack detected
+        log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "CSRF attack detected");
+        die("Invalid request");
+    }
+    
     // Get transfer details from form
     $from_account = $_POST['from_account'];
     $to_account = $_POST['to_account'];
-    $amount = $_POST['amount'];
+    $amount = floatval($_POST['amount']);
     
-    // VULNERABLE CODE: SQL Injection possible here!
-
-    $query = "UPDATE accounts SET balance = balance - $amount WHERE account_number = '$from_account'";
-    mysqli_query($conn, $query);
+    // FIXED: SQL Injection prevention with prepared statements
+    // Check if source account belongs to user and has enough funds
+    $check_query = "SELECT balance FROM accounts WHERE account_number = ? AND user_id = ?";
+    $check_stmt = mysqli_prepare($conn, $check_query);
+    mysqli_stmt_bind_param($check_stmt, "si", $from_account, $user_id);
+    mysqli_stmt_execute($check_stmt);
+    $check_result = mysqli_stmt_get_result($check_stmt);
     
-    $query = "UPDATE accounts SET balance = balance + $amount WHERE account_number = '$to_account'";
-    mysqli_query($conn, $query);
-    
-    // VULNERABLE CODE: Insecure data handling
-    $query = "INSERT INTO transactions (from_account, to_account, amount) VALUES ('$from_account', '$to_account', $amount)";
-    mysqli_query($conn, $query);
-    
-    // Log the transfer
-    log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Transferred $amount from $from_account to $to_account");
-    
-    $success = "Transfer successful!";
+    if ($row = mysqli_fetch_assoc($check_result)) {
+        $balance = $row['balance'];
+        if ($balance >= $amount && $amount > 0) {
+            // Begin transaction
+            mysqli_begin_transaction($conn);
+            
+            try {
+                // Update source account
+                $query = "UPDATE accounts SET balance = balance - ? WHERE account_number = ?";
+                $stmt = mysqli_prepare($conn, $query);
+                mysqli_stmt_bind_param($stmt, "ds", $amount, $from_account);
+                mysqli_stmt_execute($stmt);
+                
+                // Update destination account
+                $query = "UPDATE accounts SET balance = balance + ? WHERE account_number = ?";
+                $stmt = mysqli_prepare($conn, $query);
+                mysqli_stmt_bind_param($stmt, "ds", $amount, $to_account);
+                mysqli_stmt_execute($stmt);
+                
+                // Record transaction
+                $query = "INSERT INTO transactions (from_account, to_account, amount) VALUES (?, ?, ?)";
+                $stmt = mysqli_prepare($conn, $query);
+                mysqli_stmt_bind_param($stmt, "ssd", $from_account, $to_account, $amount);
+                mysqli_stmt_execute($stmt);
+                
+                // Commit transaction
+                mysqli_commit($conn);
+                
+                // Log the transfer
+                log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Transferred $amount from $from_account to $to_account");
+                
+                $success = "Transfer successful!";
+            } catch (Exception $e) {
+                // Rollback on error
+                mysqli_rollback($conn);
+                $error = "Transfer failed: " . $e->getMessage();
+            }
+        } else {
+            $error = "Insufficient funds or invalid amount";
+        }
+    } else {
+        $error = "Invalid source account";
+    }
 }
 
 // Include the header (contains navigation and styling)
@@ -68,7 +119,7 @@ require_once '../includes/header.php';
                 <?php while ($account = mysqli_fetch_assoc($accounts)): ?>
                 <div class="account-item">
                     <div class="account-info">
-                        <span class="account-number"><?php echo $account['account_number']; ?></span>
+                        <span class="account-number"><?php echo htmlspecialchars($account['account_number'], ENT_QUOTES, 'UTF-8'); ?></span>
                         <span class="account-balance">$<?php echo number_format($account['balance'], 2); ?></span>
                     </div>
                 </div>
@@ -85,11 +136,18 @@ require_once '../includes/header.php';
             <?php if (isset($success)): ?>
                 <div class="success-message">
                     <span class="success-icon">✓</span>
-                    <?php echo $success; ?>
+                    <?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?>
+                </div>
+            <?php endif; ?>
+            <?php if (isset($error)): ?>
+                <div class="error-message">
+                    <span class="error-icon">❌</span>
+                    <?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?>
                 </div>
             <?php endif; ?>
             <form method="POST" class="transfer-form">
                 <input type="hidden" name="transfer" value="1">
+                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                 <div class="form-group">
                     <label for="from_account">From Account</label>
                     <input type="text" id="from_account" name="from_account" placeholder="Enter account number" required>
@@ -100,7 +158,7 @@ require_once '../includes/header.php';
                 </div>
                 <div class="form-group">
                     <label for="amount">Amount</label>
-                    <input type="number" id="amount" name="amount" placeholder="Enter amount" required>
+                    <input type="number" id="amount" name="amount" placeholder="Enter amount" step="0.01" min="0.01" required>
                 </div>
                 <button type="submit" class="btn-transfer">Transfer Money</button>
             </form>
@@ -246,20 +304,27 @@ require_once '../includes/header.php';
         background: var(--primary-dark);
         transform: translateY(-2px);
     }
-
+    
     .success-message {
         background: #dcfce7;
-        color: var(--success);
-        padding: 1rem;
+        color: #166534;
+        padding: 0.75rem;
         border-radius: 8px;
         margin-bottom: 1rem;
         display: flex;
         align-items: center;
         gap: 0.5rem;
     }
-
-    .success-icon {
-        font-size: 1.25rem;
+    
+    .error-message {
+        background: #fee2e2;
+        color: #b91c1c;
+        padding: 0.75rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
 
     .quick-actions {

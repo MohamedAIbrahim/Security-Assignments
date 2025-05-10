@@ -11,28 +11,81 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Handle complaint form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $user_id = $_SESSION['user_id'];
-    $description = $_POST['description'];
+    // Verify CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        // CSRF attack detected
+        log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "CSRF attack detected on complaint form");
+        die("Invalid request");
+    }
     
-    // VULNERABLE CODE: File upload handling
+    $user_id = $_SESSION['user_id'];
+    $description = htmlspecialchars($_POST['description'], ENT_QUOTES, 'UTF-8');
+    
+    // FIXED: Secure file upload handling
     if (isset($_FILES['complaint_file'])) {
         $file_name = $_FILES['complaint_file']['name'];
         $file_tmp = $_FILES['complaint_file']['tmp_name'];
-        $upload_dir = "uploads/";
+        $file_size = $_FILES['complaint_file']['size'];
+        $file_type = $_FILES['complaint_file']['type'];
         
-        // VULNERABLE CODE: No file type validation
-        // This allows uploading of potentially dangerous files
-        move_uploaded_file($file_tmp, $upload_dir . $file_name);
+        // Get file extension
+        $tmp = explode('.', $file_name);
+        $file_ext = strtolower(end($tmp));
         
-        // VULNERABLE CODE: SQL Injection possible here!
-        $query = "INSERT INTO complaints (user_id, file_name, file_path, description) 
-                 VALUES ($user_id, '$file_name', '$upload_dir$file_name', '$description')";
-        mysqli_query($conn, $query);
+        // Define allowed file types
+        $allowed_types = array('pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png');
         
-        $success = "Complaint submitted successfully!";
-        log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Filed a complaint: $description");
+        // Security checks
+        $errors = array();
+        
+        // Check file type
+        if (!in_array($file_ext, $allowed_types)) {
+            $errors[] = "File type not allowed. Please upload PDF, DOC, DOCX, TXT, JPG, JPEG or PNG files only.";
+        }
+        
+        // Check file size (max 5MB)
+        if ($file_size > 5000000) {
+            $errors[] = "File size must be less than 5MB";
+        }
+        
+        // Create a secure file name
+        $new_file_name = md5($user_id . time() . $file_name) . '.' . $file_ext;
+        $upload_dir = "../uploads/";
+        
+        // Ensure upload directory exists and is writable
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        
+        // Create a full relative path
+        $upload_path = $upload_dir . $new_file_name;
+        
+        // If no errors, proceed with upload
+        if (empty($errors)) {
+            if (move_uploaded_file($file_tmp, $upload_path)) {
+                // FIXED: Use prepared statements to prevent SQL injection
+                $query = "INSERT INTO complaints (user_id, file_name, file_path, description) 
+                         VALUES (?, ?, ?, ?)";
+                $stmt = mysqli_prepare($conn, $query);
+                mysqli_stmt_bind_param($stmt, "isss", $user_id, $new_file_name, $upload_path, $description);
+                
+                if (mysqli_stmt_execute($stmt)) {
+                    $success = "Complaint submitted successfully!";
+                    log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Filed a complaint: $description");
+                } else {
+                    $errors[] = "Database error: " . mysqli_error($conn);
+                }
+            } else {
+                $errors[] = "Error uploading file. Please try again.";
+            }
+        }
     }
 }
 
@@ -54,12 +107,25 @@ require_once '../includes/header.php';
         <?php if (isset($success)): ?>
             <div class="success-message">
                 <span class="success-icon">✓</span>
-                <?php echo $success; ?>
+                <?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?>
+            </div>
+        <?php endif; ?>
+        
+        <!-- Error Messages -->
+        <?php if (!empty($errors)): ?>
+            <div class="error-message">
+                <ul>
+                    <?php foreach ($errors as $error): ?>
+                        <li><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></li>
+                    <?php endforeach; ?>
+                </ul>
             </div>
         <?php endif; ?>
 
         <!-- Complaint Form -->
         <form method="POST" enctype="multipart/form-data" class="complaint-form">
+            <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+            
             <!-- Complaint Description -->
             <div class="form-group">
                 <label for="description">Complaint Details</label>
@@ -77,7 +143,7 @@ require_once '../includes/header.php';
                 <label for="complaint_file" class="file-label">
                     <span class="file-icon">📎</span>
                     <span class="file-text">Attach Supporting Document</span>
-                    <span class="file-hint">Click to upload or drag and drop</span>
+                    <span class="file-hint">Allowed formats: PDF, DOC, DOCX, TXT, JPG, JPEG, PNG (max 5MB)</span>
                 </label>
                 <input 
                     type="file" 
@@ -131,7 +197,7 @@ require_once '../includes/header.php';
     /* Success message styling */
     .success-message {
         background: #dcfce7;
-        color: var(--success);
+        color: #166534;
         padding: 1rem;
         border-radius: 8px;
         margin-bottom: 1.5rem;
@@ -142,6 +208,20 @@ require_once '../includes/header.php';
 
     .success-icon {
         font-size: 1.25rem;
+    }
+    
+    /* Error message styling */
+    .error-message {
+        background: #fee2e2;
+        color: #b91c1c;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+    }
+    
+    .error-message ul {
+        margin: 0;
+        padding-left: 1.5rem;
     }
 
     /* Form styling */

@@ -19,28 +19,42 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $username = $_POST['username'];
     $password = $_POST['password'];
     
-    // VULNERABLE CODE: SQL Injection possible here!
-    $query = "SELECT * FROM users WHERE username = '$username' AND password = '$password'";
-    $result = mysqli_query($conn, $query);
+    // FIXED: Use prepared statements to prevent SQL injection
+    $query = "SELECT * FROM users WHERE username = ?";
+    $stmt = mysqli_prepare($conn, $query);
+    mysqli_stmt_bind_param($stmt, "s", $username);
+    mysqli_stmt_execute($stmt);
+    $result = mysqli_stmt_get_result($stmt);
     
     // If user found in database
     if (mysqli_num_rows($result) > 0) {
         $user = mysqli_fetch_assoc($result);
         
-        // Store user information in session
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['username'] = $user['username'];
-        $_SESSION['role'] = $user['role'];
-        
-        // VULNERABLE CODE: Storing password in session is a security risk!
-        $_SESSION['password'] = $password;
-        
-        // Log the successful login
-        log_action($conn, $user['id'], $user['username'], 'Logged in');
-        
-        // Redirect to dashboard
-        header("Location: dashboard.php");
-        exit();
+        // FIXED: Properly verify hashed password using password_verify
+        if (password_verify($password, $user['password_hash'])) {
+            // Store user information in session
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['role'] = $user['role'];
+            
+            // Log the successful login
+            log_action($conn, $user['id'], $user['username'], 'Logged in');
+            
+            // FIXED: Update password hash if needed (using newer/stronger algorithm)
+            if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+                $new_hash = password_hash($password, PASSWORD_DEFAULT);
+                $update_query = "UPDATE users SET password_hash = ? WHERE id = ?";
+                $update_stmt = mysqli_prepare($conn, $update_query);
+                mysqli_stmt_bind_param($update_stmt, "si", $new_hash, $user['id']);
+                mysqli_stmt_execute($update_stmt);
+            }
+            
+            // Redirect to dashboard
+            header("Location: dashboard.php");
+            exit();
+        } else {
+            $error = "Invalid credentials";
+        }
     } else {
         $error = "Invalid credentials";
     }
@@ -53,7 +67,7 @@ require_once '../includes/header.php';
 <!-- Login Form HTML -->
 <div class="card">
     <h2>Bank Login</h2>
-    <?php if (isset($error)) echo "<p class='error'>$error</p>"; ?>
+    <?php if (isset($error)) echo "<p class='error'>".htmlspecialchars($error, ENT_QUOTES, 'UTF-8')."</p>"; ?>
     <form method="POST">
         <div class="form-group">
             <input type="text" name="username" placeholder="Username" required>
@@ -65,6 +79,9 @@ require_once '../includes/header.php';
             <input type="submit" value="Login">
         </div>
     </form>
+    <div class="register-link">
+        <p>Don't have an account? <a href="register.php">Register here</a></p>
+    </div>
 </div>
 
 <?php require_once '../includes/footer.php'; ?> 

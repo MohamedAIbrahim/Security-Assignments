@@ -11,27 +11,48 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Handle message form submission
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $user_id = $_SESSION['user_id'];
-    $message = $_POST['message'];
-    
-    // VULNERABLE CODE: SQL Injection and XSS possible here!
-    $query = "INSERT INTO messages (user_id, message) VALUES ($user_id, '$message')";
-    mysqli_query($conn, $query);
-    
-    // Log the message
-    log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Sent a message: $message");
-    
-    $success = "Message sent successfully!";
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Get all messages
-// VULNERABLE CODE: No access control - all users can see all messages
-$query = "SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id = u.id ORDER BY m.created_at DESC";
-$messages = mysqli_query($conn, $query);
+// Handle message form submission
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Verify CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        // CSRF attack detected
+        log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "CSRF attack detected on message form");
+        die("Invalid request");
+    }
+    
+    $user_id = $_SESSION['user_id'];
+    $message = htmlspecialchars($_POST['message'], ENT_QUOTES, 'UTF-8');
+    
+    // FIXED: SQL Injection prevention with prepared statements
+    $query = "INSERT INTO messages (user_id, message) VALUES (?, ?)";
+    $stmt = mysqli_prepare($conn, $query);
+    mysqli_stmt_bind_param($stmt, "is", $user_id, $message);
+    
+    if (mysqli_stmt_execute($stmt)) {
+        // Log the message
+        log_action($conn, $_SESSION['user_id'], $_SESSION['username'], "Sent a message");
+        
+        $success = "Message sent successfully!";
+    } else {
+        $error = "Error sending message: " . mysqli_error($conn);
+    }
+}
 
-
+// Get messages for current user only
+// FIXED: Access control - users can only see their own messages
+$user_id = $_SESSION['user_id'];
+$query = "SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id = u.id 
+          WHERE m.user_id = ? OR (u.role = 'admin') 
+          ORDER BY m.created_at DESC";
+$stmt = mysqli_prepare($conn, $query);
+mysqli_stmt_bind_param($stmt, "i", $user_id);
+mysqli_stmt_execute($stmt);
+$messages = mysqli_stmt_get_result($stmt);
 
 require_once '../includes/header.php';
 ?>
@@ -52,12 +73,21 @@ require_once '../includes/header.php';
             <?php if (isset($success)): ?>
                 <div class="success-message">
                     <span class="success-icon">✓</span>
-                    <?php echo $success; ?>
+                    <?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?>
+                </div>
+            <?php endif; ?>
+            
+            <!-- Error Message -->
+            <?php if (isset($error)): ?>
+                <div class="error-message">
+                    <span class="error-icon">❌</span>
+                    <?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?>
                 </div>
             <?php endif; ?>
 
             <!-- Message Form -->
             <form method="POST" class="message-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                 <div class="form-group">
                     <label for="message">Your Message</label>
                     <textarea 
@@ -66,6 +96,7 @@ require_once '../includes/header.php';
                         placeholder="Type your message here..." 
                         required
                         rows="4"
+                        maxlength="500"
                     ></textarea>
                 </div>
                 <button type="submit" class="send-button">
@@ -85,11 +116,11 @@ require_once '../includes/header.php';
                 <?php while ($msg = mysqli_fetch_assoc($messages)): ?>
                 <div class="message-item">
                     <div class="message-header">
-                        <span class="message-author"><?php echo $msg['username']; ?></span>
+                        <span class="message-author"><?php echo htmlspecialchars($msg['username'], ENT_QUOTES, 'UTF-8'); ?></span>
                         <span class="message-time"><?php echo date('M d, Y H:i', strtotime($msg['created_at'])); ?></span>
                     </div>
                     <div class="message-content">
-                        <?php echo $msg['message']; ?>
+                        <?php echo htmlspecialchars($msg['message'], ENT_QUOTES, 'UTF-8'); ?>
                     </div>
                 </div>
                 <?php endwhile; ?>
@@ -127,6 +158,12 @@ require_once '../includes/header.php';
         grid-template-columns: 1fr 1fr;
         gap: 2rem;
     }
+    
+    @media (max-width: 768px) {
+        .message-grid {
+            grid-template-columns: 1fr;
+        }
+    }
 
     /* Card styling */
     .message-card {
@@ -139,7 +176,7 @@ require_once '../includes/header.php';
     /* Success message styling */
     .success-message {
         background: #dcfce7;
-        color: var(--success);
+        color: #166534;
         padding: 1rem;
         border-radius: 8px;
         margin-bottom: 1.5rem;
@@ -150,6 +187,18 @@ require_once '../includes/header.php';
 
     .success-icon {
         font-size: 1.25rem;
+    }
+    
+    /* Error message styling */
+    .error-message {
+        background: #fee2e2;
+        color: #b91c1c;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
 
     /* Form styling */
@@ -251,8 +300,12 @@ require_once '../includes/header.php';
     }
 
     .message-list::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
+        background: var(--primary-light);
         border-radius: 3px;
+    }
+
+    .message-list::-webkit-scrollbar-thumb:hover {
+        background: var(--primary);
     }
 
     /* Message item styling */
@@ -260,51 +313,33 @@ require_once '../includes/header.php';
         background: var(--background);
         padding: 1rem;
         border-radius: 8px;
-        transition: transform 0.2s ease;
+        transition: background-color 0.2s ease;
     }
 
     .message-item:hover {
-        transform: translateX(4px);
+        background: #f1f5f9;
     }
 
     .message-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
         margin-bottom: 0.5rem;
+        font-size: 0.875rem;
     }
 
     .message-author {
-        font-weight: 600;
-        color: var(--text);
+        font-weight: 500;
+        color: var(--primary);
     }
 
     .message-time {
-        font-size: 0.875rem;
         color: var(--text-light);
     }
 
     .message-content {
         color: var(--text);
         line-height: 1.5;
-    }
-
-    @media (max-width: 768px) {
-        .message-page {
-            padding: 1rem 0;
-        }
-
-        .page-header h1 {
-            font-size: 1.5rem;
-        }
-
-        .message-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .message-card {
-            padding: 1rem;
-        }
+        word-break: break-word;
     }
 </style>
 
