@@ -2,8 +2,8 @@
 
 // Start session and include required files
 session_start();
-require_once 'config.php';      // Database connection
-require_once 'log_action.php';  // Logging functionality
+require_once '../config/config.php';      // Database connection
+require_once '../includes/log_action.php';  // Logging functionality
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 // Include the header (contains navigation and styling)
-require_once 'header.php';
+require_once '../includes/header.php';
 ?>
 
 <!-- Complaint Form HTML Structure -->
@@ -272,4 +272,4 @@ require_once 'header.php';
     }
 </style>
 
-<?php require_once 'footer.php'; ?> 
+<?php require_once '../includes/footer.php'; ?> 

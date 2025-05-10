@@ -1,10 +1,10 @@
 <?php
 session_start();
-require_once 'config.php';
+require_once '../config/config.php';
 
 // A5:2017 - Broken Access Control - No proper role validation
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'admin') {
-    header("Location: login.php");
+    header("Location: ../public/login.php");
     exit();
 }
 
@@ -27,7 +27,7 @@ function log_action($action) {
 // Log page access
 log_action("Accessed admin dashboard");
 
-require_once 'header.php';
+require_once '../includes/header.php';
 
 $result = mysqli_query($conn, "SELECT * FROM logs ORDER BY created_at DESC");
 ?>
@@ -94,4 +94,4 @@ $result = mysqli_query($conn, "SELECT * FROM logs ORDER BY created_at DESC");
 
 <li><a href="admin.php?view=logs">View Logs</a></li>
 
-<?php require_once 'footer.php'; ?> 
+<?php require_once '../includes/footer.php'; ?> 

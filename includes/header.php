@@ -199,18 +199,18 @@ if (session_status() === PHP_SESSION_NONE) {
 <body>
     <nav class="navbar">
         <ul>
-            <li><a href="index.php">Home</a></li>
+            <li><a href="../index.php">Home</a></li>
             <?php if (isset($_SESSION['user_id'])): ?>
-                <li><a href="dashboard.php">Dashboard</a></li>
-                <li><a href="statement.php">Statement</a></li>
-                <li><a href="complaint.php">Complaints</a></li>
-                <li><a href="message.php">Messages</a></li>
+                <li><a href="../public/dashboard.php">Dashboard</a></li>
+                <li><a href="../public/statement.php">Statement</a></li>
+                <li><a href="../public/complaint.php">Complaints</a></li>
+                <li><a href="../public/message.php">Messages</a></li>
                 <?php if ($_SESSION['role'] == 'admin'): ?>
-                    <li><a href="admin.php">Admin Panel</a></li>
+                    <li><a href="../admin/admin.php">Admin Panel</a></li>
                 <?php endif; ?>
-                <li><a href="logout.php">Logout</a></li>
+                <li><a href="../public/logout.php">Logout</a></li>
             <?php else: ?>
-                <li><a href="login.php">Login</a></li>
+                <li><a href="../public/login.php">Login</a></li>
             <?php endif; ?>
         </ul>
     </nav>

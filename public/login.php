@@ -4,8 +4,8 @@
 session_start();
 
 // Include required files
-require_once 'config.php';      // Database connection
-require_once 'log_action.php';  // Logging functionality
+require_once '../config/config.php';      // Database connection
+require_once '../includes/log_action.php';  // Logging functionality
 
 // If user is already logged in, redirect to dashboard
 if (isset($_SESSION['user_id'])) {
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 
-require_once 'header.php';
+require_once '../includes/header.php';
 ?>
 
 <!-- Login Form HTML -->
@@ -67,4 +67,4 @@ require_once 'header.php';
     </form>
 </div>
 
-<?php require_once 'footer.php'; ?> 
+<?php require_once '../includes/footer.php'; ?> 

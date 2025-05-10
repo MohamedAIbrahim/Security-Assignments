@@ -1,5 +1,5 @@
 <?php
-require_once 'header.php';
+require_once 'includes/header.php';
 ?>
 
 <div class="hero">
@@ -7,7 +7,7 @@ require_once 'header.php';
         <h1>Welcome to Vulnerable Bank</h1>
         <p class="subtitle">A platform for learning web security</p>
         <div class="cta-buttons">
-            <a href="login.php" class="btn btn-primary">Get Started</a>
+            <a href="public/login.php" class="btn btn-primary">Get Started</a>
             <a href="#about" class="btn btn-secondary">Learn More</a>
         </div>
     </div>
@@ -139,4 +139,4 @@ require_once 'header.php';
     }
 </style>
 
-<?php require_once 'footer.php'; ?> 
+<?php require_once 'includes/footer.php'; ?> 
